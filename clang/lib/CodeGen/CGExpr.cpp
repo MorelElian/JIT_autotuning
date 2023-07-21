@@ -39,6 +39,7 @@
 #include "llvm/Transforms/Utils/SanitizerStats.h"
 
 #include <string>
+#include <iostream>
 
 using namespace clang;
 using namespace CodeGen;
@@ -2550,7 +2551,7 @@ llvm::Value *CodeGenFunction::EmitJITStubCall(const FunctionDecl *FD) {
       Builder.CreateGlobalStringPtr(InstKey, ".cj.key.str"),
       Builder.getInt32(Cnt)
   };
-
+  
   return EmitRuntimeCall(RTLFn, Args);
 }
 

@@ -24,6 +24,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include <cstring>
+#include <iostream>
 using namespace clang;
 
 
@@ -358,6 +359,7 @@ bool Declarator::isDeclarationOfFunction() const {
     case TST_unspecified:
     case TST_void:
     case TST_wchar:
+    case TST_autotune:
 #define GENERIC_IMAGE_TYPE(ImgType, Id) case TST_##ImgType##_t:
 #include "clang/Basic/OpenCLImageTypes.def"
       return false;
@@ -555,6 +557,8 @@ const char *DeclSpec::getSpecifierName(DeclSpec::TST T,
   case DeclSpec::TST_underlyingType: return "__underlying_type";
   case DeclSpec::TST_unknown_anytype: return "__unknown_anytype";
   case DeclSpec::TST_atomic: return "_Atomic";
+  //case DeclSpec::TST_autotune : return "autotune";
+  
 #define GENERIC_IMAGE_TYPE(ImgType, Id) \
   case DeclSpec::TST_##ImgType##_t: \
     return #ImgType "_t";
@@ -572,6 +576,7 @@ const char *DeclSpec::getSpecifierName(TQ T) {
   case DeclSpec::TQ_volatile:    return "volatile";
   case DeclSpec::TQ_atomic:      return "_Atomic";
   case DeclSpec::TQ_unaligned:   return "__unaligned";
+  case DeclSpec::TQ_autotune:    return "_autotune";
   }
   llvm_unreachable("Unknown typespec!");
 }
@@ -758,6 +763,7 @@ bool DeclSpec::SetTypeSpecType(TST T, SourceLocation TagKwLoc,
 
   if (TypeSpecType != TST_unspecified) {
     PrevSpec = DeclSpec::getSpecifierName((TST) TypeSpecType, Policy);
+    
     DiagID = diag::err_invalid_decl_spec_combination;
     return true;
   }
@@ -897,6 +903,7 @@ bool DeclSpec::SetTypeQual(TQ T, SourceLocation Loc) {
   case TQ_volatile: TQ_volatileLoc = Loc; return false;
   case TQ_unaligned: TQ_unalignedLoc = Loc; return false;
   case TQ_atomic:   TQ_atomicLoc = Loc; return false;
+  case TQ_autotune: TQ_autotuneLoc = Loc;return false;
   }
 
   llvm_unreachable("Unknown type qualifier!");
@@ -1042,11 +1049,11 @@ void DeclSpec::Finish(Sema &S, const PrintingPolicy &Policy) {
        TypeSpecSign != TSS_unspecified ||
        TypeAltiVecVector || TypeAltiVecPixel || TypeAltiVecBool ||
        TypeQualifiers)) {
-    const unsigned NumLocs = 9;
+    const unsigned NumLocs = 10;
     SourceLocation ExtraLocs[NumLocs] = {
         TSWRange.getBegin(), TSCLoc,       TSSLoc,
         AltiVecLoc,          TQ_constLoc,  TQ_restrictLoc,
-        TQ_volatileLoc,      TQ_atomicLoc, TQ_unalignedLoc};
+        TQ_volatileLoc,      TQ_atomicLoc, TQ_unalignedLoc,TQ_autotuneLoc};
     FixItHint Hints[NumLocs];
     SourceLocation FirstLoc;
     for (unsigned I = 0; I != NumLocs; ++I) {

@@ -5,7 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-
+#include <llvm/IR/BasicBlock.h>
+#include <iostream>
 #include "clang/CodeGen/CodeGenAction.h"
 #include "CodeGenModule.h"
 #include "CoverageMappingGen.h"
@@ -16,6 +17,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclGroup.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/PrettyPrinter.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticIDs.h"
 #include "clang/Basic/DiagnosticOptions.h"
@@ -26,6 +28,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TargetOptions.h"
+
 #include "clang/CodeGen/BackendUtil.h"
 #include "clang/CodeGen/ModuleBuilder.h"
 #include "clang/Driver/Compilation.h"
@@ -65,6 +68,8 @@
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/IR/DerivedTypes.h"
+#include <llvm/IR/Function.h>
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -110,10 +115,15 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include <x86intrin.h>
 using namespace clang;
 using namespace llvm;
 
 #define DEBUG_TYPE "clang-jit"
+llvm::DenseMap<const void *, int> autotuneTable;
+llvm::DenseMap<const void *, llvm::APInt*>Values;
+long long *rtdsc_values;
+
 
 namespace {
 // FIXME: This is copied from lib/Frontend/ASTUnit.cpp
@@ -453,6 +463,8 @@ public:
   CodeGenerator *getCodeGenerator() { return Gen.get(); }
 
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD) override {
+    
+    VD->dump();
     Gen->HandleCXXStaticMemberVarInstantiation(VD);
   }
 
@@ -531,7 +543,161 @@ public:
                       llvm::make_unique<llvm::buffer_ostream>(*AsmOutStream));
   }
 };
+template<typename T>
+class AutotuneInfo
+{
+  public :
 
+  int nCalls;
+  int sizeOfTable;
+  int idAT;
+  int idParameter;
+  std::string variableName;
+  QualType varTypeAutotune;
+  T* Values;
+  long long *rtdscValues;
+  bool toOptimize;
+  AutotuneInfo(QualType varTypeAutotune,int idAT)
+  {
+    this->nCalls = 0;
+    this->toOptimize = true;
+    this->idAT = idAT;
+    this->varTypeAutotune = varTypeAutotune;
+    this->sizeOfTable = 0;
+  }
+  void allocRtdscValues()
+  {
+    
+    this->rtdscValues =  (long long *) malloc(this->sizeOfTable * sizeof(long long));
+    this->idParameter = 0;
+    this->nCalls++;
+  }
+  void updateRtdscValues(const char* filename)
+  {
+    FILE* rtdscCompteur = fopen(filename,"r");
+    
+    long long valueRTDSC;
+    fscanf(rtdscCompteur, "%lld", &valueRTDSC);
+    //Fonction attribution du i_parameter
+    this->rtdscValues[this->nCalls-1] = valueRTDSC;
+    this->idParameter++;
+    if(this->nCalls >= this->sizeOfTable)
+    {
+      
+      this->toOptimize = false;
+      this->idParameter = 0;
+      long long min = this->rtdscValues[0];
+      for(int k = 1; k < this->sizeOfTable; k++)
+      {
+        if(min > this->rtdscValues[k])
+        {
+            this->idParameter = k;
+            min = this->rtdscValues[k];
+        }
+      }
+      std::cout << "Final MIN :\n";
+    }
+    std::cout << "Current id Param:" << this->idParameter << "\n";    
+    this->nCalls++;
+  }
+  void readElements(VarDecl* TAB,unsigned ElemSize,llvm::APInt IntVal)
+  {
+    if (const auto *CAT = dyn_cast<ConstantArrayType>(TAB->getType())) 
+    {
+      
+      auto const Sz = CAT->getSize();
+      this->sizeOfTable = Sz.getZExtValue();
+
+      this->Values = new llvm::APInt[Sz.getZExtValue()];  
+      unsigned ElemNumIntWords = llvm::alignTo<8>(ElemSize);
+
+      unsigned NumIntWords = llvm::alignTo<8>(Sz.getZExtValue());
+      SmallVector<uint64_t, 2> IntWords(NumIntWords, 0);
+      
+      const char *Elem = (const char *) IntVal.getZExtValue();
+      for (unsigned i = 0; i < Sz.getZExtValue(); ++i) {
+
+        SmallVector<uint64_t, 2> ElemIntWords(ElemNumIntWords, 0);
+    
+        std::memcpy((char *) ElemIntWords.data(), Elem, ElemSize);
+       
+        Elem += ElemSize;
+        
+        llvm::APInt ElemVal(ElemSize*8, ElemIntWords);
+        
+        this->Values[i] = ElemVal; 
+      }
+    }
+  }
+  void addLLVMInstructions(const char* filename,std::string SMName,BackendConsumer* Consumer)
+  {
+    llvm::Function *myFunction = Consumer->getModule()->getFunction(SMName);
+    auto* module = Consumer->getModule();
+    if (!myFunction) {
+    llvm::errs() << "La fonction 'my_function' n'a pas été trouvée.\n";
+    
+    }
+    else
+    {
+      llvm::IRBuilder<> builder(Consumer->getModule()->getContext());
+      
+      llvm::BasicBlock* entryBlock = &myFunction->getEntryBlock();
+      llvm::BasicBlock* lastBlock = &myFunction->back();
+
+      // Définit le point d'insertion au début du bloc d'entrée
+      builder.SetInsertPoint(entryBlock, entryBlock->getFirstInsertionPt());
+      
+      
+      Value *toAutotune = module->getNamedGlobal(this->variableName);
+      
+      llvm::PointerType* PointerType = cast<llvm::PointerType>(toAutotune->getType());
+      llvm::PointerType* ElementType = cast<llvm::PointerType>(PointerType->getElementType());
+      llvm::Type* finalType = ElementType->getElementType();
+      AllocaInst* pointerAlloca = builder.CreateAlloca(finalType,nullptr, "pointeur");
+      
+      builder.CreateStore(pointerAlloca, toAutotune);
+      Value* actualValue = builder.CreateLoad(toAutotune);
+      
+      Value* newValue = ConstantInt::get(finalType, this->Values[this->idParameter]);
+      
+      builder.CreateStore(newValue,actualValue);
+      if(this->toOptimize)
+      {
+        llvm::FunctionType* rdtscFuncType = llvm::FunctionType::get(llvm::Type::getInt64Ty(Consumer->getModule()->getContext()), false);
+        llvm::FunctionCallee rdtscFunc = module->getOrInsertFunction("llvm.x86.rdtsc", rdtscFuncType);
+
+        llvm::Value* rdtscResult = builder.CreateCall(rdtscFunc, {});
+        
+        builder.SetInsertPoint(lastBlock->getTerminator());
+      
+        llvm::Value* rdtscResultBis = builder.CreateCall(rdtscFunc);
+        llvm::Value *timeDifference = builder.CreateSub(rdtscResultBis, rdtscResult);
+        
+        llvm::FunctionType* fileOpenFuncType = llvm::FunctionType::get(llvm::Type::getInt8PtrTy(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext()), llvm::Type::getInt8PtrTy(module->getContext())}, false);
+        llvm::FunctionCallee fileOpenFunc = module->getOrInsertFunction("fopen", fileOpenFuncType);
+        llvm::Value* filenameStr = builder.CreateGlobalStringPtr(filename, "filenameStr");
+        llvm::Value* modeStr = builder.CreateGlobalStringPtr("w", "modeStr");
+
+        llvm::Value* file = builder.CreateCall(fileOpenFunc, {filenameStr, modeStr}, "file");
+
+        llvm::FunctionCallee fprintfFunc = module->getOrInsertFunction("fprintf", llvm::FunctionType::get(llvm::Type::getInt32Ty(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext()), llvm::Type::getInt8PtrTy(module->getContext())}, true));
+        auto formatConstant = llvm::ConstantDataArray::getString(module->getContext(), "%lld\n", true);
+        llvm::GlobalVariable* formatStrVar = new llvm::GlobalVariable(*module, formatConstant->getType(), true, llvm::GlobalValue::PrivateLinkage, formatConstant, ".str");
+        auto  formatStrPtr = llvm::ConstantExpr::getBitCast(formatStrVar, llvm::Type::getInt8PtrTy(module->getContext()));
+        llvm::Value* printfArgsForFile[] = {file,formatStrPtr, timeDifference };
+
+        builder.CreateCall(fprintfFunc, llvm::ArrayRef<llvm::Value*>(printfArgsForFile, 3));
+
+        llvm::FunctionType* fileCloseFuncType = llvm::FunctionType::get(llvm::Type::getInt32Ty(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext())}, false);
+        llvm::FunctionCallee fileCloseFunc = module->getOrInsertFunction("fclose", fileCloseFuncType);
+
+        builder.CreateCall(fileCloseFunc, file);
+      }
+    } 
+  }
+};
+
+llvm::DenseMap<const void *,AutotuneInfo<llvm::APInt>*> AutotuneInfoMap;
 class JFIMapDeclVisitor : public RecursiveASTVisitor<JFIMapDeclVisitor> {
   DenseMap<unsigned, FunctionDecl *> &Map;
 
@@ -621,7 +787,7 @@ struct CompilerData {
   std::shared_ptr<HeaderSearchOptions>    HSOpts;
   std::shared_ptr<PreprocessorOptions>    PPOpts;
   IntrusiveRefCntPtr<ASTReader>           Reader;
-  std::unique_ptr<BackendConsumer>        Consumer;
+  BackendConsumer*        Consumer;
   std::unique_ptr<Sema>                   S;
   TrivialModuleLoader                     ModuleLoader;
   std::unique_ptr<llvm::Module>           RunningMod;
@@ -631,7 +797,8 @@ struct CompilerData {
   std::unique_ptr<ClangJIT>               CJ;
 
   DenseMap<unsigned, FunctionDecl *>      FuncMap;
-
+  const void* ASTBuffer; 
+  
   // A map of each instantiation to the containing function. These might not be
   // unique, but should be unique for any place where it matters
   // (instantiations with from-string types).
@@ -640,6 +807,8 @@ struct CompilerData {
   std::unique_ptr<CompilerData>           DevCD;
   SmallString<1>                          DevAsm;
   std::vector<std::unique_ptr<llvm::Module>> DevLinkMods;
+  std::string name_to_autotune;
+  
 
   CompilerData(const void *CmdArgs, unsigned CmdArgsLen,
                const void *ASTBuffer, size_t ASTBufferSize,
@@ -648,6 +817,7 @@ struct CompilerData {
                const void **LocalDbgPtrs, unsigned LocalDbgPtrsCnt,
                const DevData *DeviceData, unsigned DevCnt,
                int ForDev = -1) {
+    this->ASTBuffer = ASTBuffer;
     bool IsForDev = (ForDev != -1);
 
     StringRef CombinedArgv((const char *) CmdArgs, CmdArgsLen);
@@ -656,8 +826,9 @@ struct CompilerData {
 
     llvm::opt::ArgStringList CC1Args;
     for (auto &ArgStr : Argv)
+    {  
       CC1Args.push_back(ArgStr.begin());
-
+    }
     unsigned MissingArgIndex, MissingArgCount;
     Opts = driver::createDriverOptTable();
     llvm::opt::InputArgList ParsedArgs = Opts->ParseArgs(
@@ -763,11 +934,11 @@ struct CompilerData {
        OS.reset(new raw_svector_ostream(DevAsm));
     }
 
-    Consumer.reset(new BackendConsumer(
+    Consumer = new BackendConsumer(
         BA, *Diagnostics, Invocation->getHeaderSearchOpts(),
         Invocation->getPreprocessorOpts(), Invocation->getCodeGenOpts(),
         Invocation->getTargetOpts(), *Invocation->getLangOpts(), false, Filename,
-        std::move(OS), *LCtx, DevLinkMods));
+        std::move(OS), *LCtx, DevLinkMods);
 
     // Create a semantic analysis object and tell the AST reader about it.
     S.reset(new Sema(*PP, *Ctx, *Consumer));
@@ -804,9 +975,10 @@ struct CompilerData {
     }
 
     Consumer->Initialize(*Ctx);
-
+    
     for (unsigned Idx = 0; Idx < 2*LocalPtrsCnt; Idx += 2) {
       const char *Name = (const char *) LocalPtrs[Idx];
+      
       const void *Ptr = LocalPtrs[Idx+1];
       LocalSymAddrs[Name] = Ptr;
     }
@@ -962,10 +1134,49 @@ struct CompilerData {
 
   std::string instantiateTemplate(const void *NTTPValues, const char **TypeStrings,
                                   unsigned Idx) {
+    
     FunctionDecl *FD = FuncMap[Idx];
     if (!FD)
       fatal();
+    FunctionTemplateDecl *FTDBis = FD->getPrimaryTemplate();
+    TemplateParameterList* TPL = FTDBis->getTemplateParameters();
+    
+    
+    int compteur = 0;
+    int idAT = -1;
+    QualType autotunedType;
+    
+    
+    {
+      for (TemplateParameterList::iterator it = TPL->begin(); it != TPL->end(); ++it) {
+          
+          NamedDecl* param = *it;
 
+          if(ValueDecl* valueDecl = dyn_cast<ValueDecl>(param))
+          {
+            if(valueDecl->getType().isAutotuneQualified())
+            {
+              if(AutotuneInfoMap.find(ASTBuffer) == AutotuneInfoMap.end())
+              {
+                
+                AutotuneInfo<llvm::APInt>* AutotuneActuel = new AutotuneInfo<llvm::APInt>(valueDecl->getType(),idAT);
+                autotunedType = valueDecl->getType();
+                idAT = compteur;
+                AutotuneInfoMap[ASTBuffer] = AutotuneActuel;
+              }
+              else
+              {
+                AutotuneInfoMap[ASTBuffer]->varTypeAutotune = valueDecl->getType();
+              }
+            }
+            
+
+          }
+        compteur ++;
+        }
+
+    }
+    
     RecordDecl *RD =
       Ctx->buildImplicitRecord(llvm::Twine("__clang_jit_args_")
                                .concat(llvm::Twine(Idx))
@@ -983,7 +1194,11 @@ struct CompilerData {
     SmallVector<TASaveKind, 8> TAIsSaved;
 
     auto *FTSI = FD->getTemplateSpecializationInfo();
+    
+    
     for (auto &TA : FTSI->TemplateArguments->asArray()) {
+      
+
       auto HandleTA = [&](const TemplateArgument &TA) {
         if (TA.getKind() == TemplateArgument::Type)
           if (TA.getAsType()->isJITFromStringType()) {
@@ -999,20 +1214,34 @@ struct CompilerData {
         SmallVector<PartialDiagnosticAt, 8> Notes;
         Expr::EvalResult Eval;
         Eval.Diag = &Notes;
+        
         if (TA.getAsExpr()->
               EvaluateAsConstantExpr(Eval, Expr::EvaluateForMangling, *Ctx)) {
           TAIsSaved.push_back(TASK_None);
           return;
         }
-
+        
         QualType FieldTy = TA.getNonTypeTemplateArgumentType();
+        if(compteur == idAT)
+        {
+       
+          QualType SubFieldTy = FieldTy.getTypePtr()->getPointeeType();
+          if(dyn_cast<ConstantArrayType>(SubFieldTy))
+          {
+            
+          FieldTy = AutotuneInfoMap[ASTBuffer]->varTypeAutotune;
+          }
+        }
         auto *Field = FieldDecl::Create(
             *Ctx, RD, SourceLocation(), SourceLocation(), /*Id=*/nullptr,
             FieldTy, Ctx->getTrivialTypeSourceInfo(FieldTy, SourceLocation()),
             /*BW=*/nullptr, /*Mutable=*/false, /*InitStyle=*/ICIS_NoInit);
         Field->setAccess(AS_public);
         RD->addDecl(Field);
-
+        
+        //Field->print(llvm::outs());
+        
+        
         TAIsSaved.push_back(TASK_Value);
       };
 
@@ -1023,23 +1252,28 @@ struct CompilerData {
       }
 
       HandleTA(TA);
+      
     }
 
     RD->completeDefinition();
     RD->addAttr(PackedAttr::CreateImplicit(*Ctx));
-
+    
     const ASTRecordLayout &RLayout = Ctx->getASTRecordLayout(RD);
     assert(Ctx->getCharWidth() == 8 && "char is not 8 bits!");
 
     QualType RDTy = Ctx->getRecordType(RD);
     auto Fields = cast<RecordDecl>(RDTy->getAsTagDecl())->field_begin();
-
+    
+    
     SmallVector<TemplateArgument, 8> Builder;
 
     unsigned TAIdx = 0, TSIdx = 0;
     for (auto &TA : FTSI->TemplateArguments->asArray()) {
+       
       auto HandleTA = [&](const TemplateArgument &TA,
                           SmallVector<TemplateArgument, 8> &Builder) {
+        
+      
         if (TAIsSaved[TAIdx] == TASK_Type) {
           PP->ResetForJITTypes();
 
@@ -1058,7 +1292,7 @@ struct CompilerData {
 
           auto CSFMI = CSFuncMap.find(Idx);
           if (CSFMI != CSFuncMap.end()) {
-	  // Note that this restores the context of the function in which the
+	  // Note that this restores the Ctx->of the function in which the
 	  // template was instantiated, but not the state *within* the
 	  // function, so local types will remain unavailable.
 
@@ -1093,7 +1327,8 @@ struct CompilerData {
 
         assert(!FieldTy->isMemberPointerType() &&
                "Can't handle member pointers here without ABI knowledge");
-
+        
+        
         auto *Fld = *Fields++;
         unsigned Offset = RLayout.getFieldOffset(Fld->getFieldIndex()) / 8;
         unsigned Size = Ctx->getTypeSizeInChars(FieldTy).getQuantity();
@@ -1103,10 +1338,11 @@ struct CompilerData {
         std::memcpy((char *) IntWords.data(),
                     ((const char *) NTTPValues) + Offset, Size);
         llvm::APInt IntVal(Size*8, IntWords);
-
+         
         QualType CanonFieldTy = Ctx->getCanonicalType(FieldTy);
 
         if (FieldTy->isIntegralOrEnumerationType()) {
+          
           llvm::APSInt SIntVal(IntVal,
                                FieldTy->isUnsignedIntegerOrEnumerationType());
           Builder.push_back(TemplateArgument(*Ctx, SIntVal, CanonFieldTy));
@@ -1144,6 +1380,8 @@ struct CompilerData {
               SourceLocation Loc = FTSI->getPointOfInstantiation();
 
               QualType STy = CanonFieldTy->getPointeeType();
+              
+              
               auto &II = PP->getIdentifierTable().get(GlobalName);
 
               if (STy->isFunctionType()) {
@@ -1170,22 +1408,24 @@ struct CompilerData {
                 NewLocalSymDecls[II.getName()] = TAFD;
                 Builder.push_back(TemplateArgument(TAFD, CanonFieldTy));
               } else {
+                
                 bool MadeArray = false;
                 auto *TPL = FTSI->getTemplate()->getTemplateParameters();
                 if (TPL->size() >= TAIdx) {
                   auto *Param = TPL->getParam(TAIdx-1);
                   if (NonTypeTemplateParmDecl *NTTP =
                         dyn_cast<NonTypeTemplateParmDecl>(Param)) {
+                   
                     QualType OrigTy = NTTP->getType()->getPointeeType();
+                    
                     OrigTy = OrigTy.getDesugaredType(*Ctx);
-
+                    
+               
                     bool IsArray = false;
                     llvm::APInt Sz;
                     QualType ElemTy;
                     if (const auto *DAT = dyn_cast<DependentSizedArrayType>(OrigTy)) {
                       Expr* SzExpr = DAT->getSizeExpr();
-
-                      // Get the already-processed arguments for potential substitution.
                       auto *NewTAL = TemplateArgumentList::CreateCopy(*Ctx, Builder);
                       MultiLevelTemplateArgumentList SubstArgs(*NewTAL);
 
@@ -1197,15 +1437,18 @@ struct CompilerData {
                           ElemTy = DAT->getElementType();
                           IsArray = true;
                         }
-                      }
+                      }  
                     } else if (const auto *CAT = dyn_cast<ConstantArrayType>(OrigTy)) {
                       Sz = CAT->getSize();
                       ElemTy = CAT->getElementType();
                       IsArray = true;
                     }
-
+                    
+                      
+                      
                     if (IsArray && (ElemTy->isIntegerType() ||
                                     ElemTy->isFloatingType())) {
+                      
                       QualType ArrTy =
                         Ctx->getConstantArrayType(ElemTy,
                                                   Sz, clang::ArrayType::Normal, 0);
@@ -1221,6 +1464,7 @@ struct CompilerData {
                         Elem += ElemSize;
 
                         llvm::APInt ElemVal(ElemSize*8, ElemIntWords);
+                        
                         if (ElemTy->isIntegerType()) {
                           Vals.push_back(new (*Ctx) IntegerLiteral(
                             *Ctx, ElemVal, ElemTy, Loc));
@@ -1230,7 +1474,7 @@ struct CompilerData {
                                                                  false, ElemTy, Loc));
                         }
                       }
-
+                      
                       InitListExpr *InitL = new (*Ctx) InitListExpr(*Ctx, Loc, Vals, Loc);
                       InitL->setType(ArrTy);
 
@@ -1248,17 +1492,47 @@ struct CompilerData {
                       MadeArray = true;
                     }
                   }
-                }
+                } 
 
                 if (!MadeArray) {
+                  
+                  
+                                   
+                  
                   auto *TAVD =
                     VarDecl::Create(*Ctx, S->CurContext, Loc, Loc, &II,
+                                    AutotuneInfoMap[ASTBuffer]->varTypeAutotune, Ctx->getTrivialTypeSourceInfo(STy, Loc),
+                                    SC_Extern);
+                  
+                  auto * TAB = VarDecl::Create(*Ctx, S->CurContext, Loc, Loc, &II,
                                     STy, Ctx->getTrivialTypeSourceInfo(STy, Loc),
                                     SC_Extern);
+                  
+                  
+                  if(AutotuneInfoMap[ASTBuffer]->nCalls == 0)
+                  {
+                    
+                    const auto *CAT = dyn_cast<ConstantArrayType>(TAB->getType());
+                    auto ElemTy = CAT->getElementType();
+                    
+                    unsigned ElemSize = Ctx->getTypeSizeInChars(ElemTy).getQuantity();
+                   
+                    AutotuneInfoMap[ASTBuffer]->readElements(TAB,ElemSize,IntVal);
+                    
+                  }
+                  
+                  
+                
+                 
                   TAVD->setImplicit();
-
+                  
+                  
+                  AutotuneInfoMap[ASTBuffer]->variableName = TAVD->getNameAsString();
                   NewLocalSymDecls[II.getName()] = TAVD;
+
+                  CanonFieldTy = AutotuneInfoMap[ASTBuffer]->varTypeAutotune->getPointeeType()  ; 
                   Builder.push_back(TemplateArgument(TAVD, CanonFieldTy));
+                  
                 }
               }
 
@@ -1281,6 +1555,8 @@ struct CompilerData {
 
     SourceLocation Loc = FTSI->getPointOfInstantiation();
     auto *NewTAL = TemplateArgumentList::CreateCopy(*Ctx, Builder);
+    clang::PrintingPolicy policy(clang::LangOptions());
+    //policy.adjustForCPlusPlus();
     MultiLevelTemplateArgumentList SubstArgs(*NewTAL);
 
     auto *FunctionTemplate = FTSI->getTemplate();
@@ -1313,7 +1589,7 @@ struct CompilerData {
 
     if (Diagnostics->hasErrorOccurred())
       fatal();
-
+    
     return SMName;
   }
 
@@ -1329,7 +1605,9 @@ struct CompilerData {
     // also happen during the instantiation of the top-level function
     // template), and this is why we merge the running module into the new one
     // with the running-module overriding new entities.
-
+    
+    
+    
     SmallSet<StringRef, 16> LastDeclNames;
     bool Changed;
     do {
@@ -1370,12 +1648,27 @@ struct CompilerData {
         Changed = true;
       }
     } while (Changed);
+    
   }
 
   void *resolveFunction(const void *NTTPValues, const char **TypeStrings,
                         unsigned Idx) {
     std::string SMName = instantiateTemplate(NTTPValues, TypeStrings, Idx);
-
+    
+    if(AutotuneInfoMap[ASTBuffer]->nCalls == 0)
+    {
+      AutotuneInfoMap[ASTBuffer]->allocRtdscValues();
+    }
+    else if(AutotuneInfoMap[ASTBuffer]->toOptimize) 
+    {
+      
+      AutotuneInfoMap[ASTBuffer]->updateRtdscValues("/tmp/rtdsc.txt");
+    }
+    
+    AutotuneInfoMap[ASTBuffer]->addLLVMInstructions("/tmp/rtdsc.txt",SMName,Consumer);
+    
+    
+    
     // Now we know the name of the symbol, check to see if we already have it.
     if (auto SpecSymbol = CJ->findSymbol(SMName))
       if (SpecSymbol.getAddress())
@@ -1385,7 +1678,9 @@ struct CompilerData {
       DevCD->instantiateTemplate(NTTPValues, TypeStrings, Idx);
 
     emitAllNeeded();
-
+    
+    
+    
     if (DevCD)
       DevCD->emitAllNeeded(false);
 
@@ -1743,6 +2038,7 @@ struct ThisInstInfo {
 
   const char **TypeStrings;
   unsigned TypeStringsCnt;
+ 
 };
 
 struct InstMapInfo {
@@ -1831,15 +2127,26 @@ void *__clang_jit(const void *CmdArgs, unsigned CmdArgsLen,
                   const void *NTTPValues, unsigned NTTPValuesSize,
                   const char **TypeStrings, unsigned TypeStringsCnt,
                   const char *InstKey, unsigned Idx) {
+  
   {
+    
     llvm::MutexGuard Guard(IMutex);
+    
+    auto IIAutotune = AutotuneInfoMap.find(ASTBuffer);
+    
+    if(IIAutotune == AutotuneInfoMap.end())
+    {
     auto II =
       Instantiations.find_as(ThisInstInfo(InstKey, NTTPValues, NTTPValuesSize,
                                           TypeStrings, TypeStringsCnt));
     if (II != Instantiations.end())
+      {
+      
       return II->second;
+      }
+    }
   }
-
+  
   llvm::MutexGuard Guard(Mutex);
 
   if (!InitializedTarget) {
@@ -1854,15 +2161,18 @@ void *__clang_jit(const void *CmdArgs, unsigned CmdArgsLen,
 
   CompilerData *CD;
   auto TUCDI = TUCompilerData.find(ASTBuffer);
-  if (TUCDI == TUCompilerData.end()) {
+  
+  
+  if (TUCDI == TUCompilerData.end() || AutotuneInfoMap.find(ASTBuffer) != AutotuneInfoMap.end()) {
     CD = new CompilerData(CmdArgs, CmdArgsLen, ASTBuffer, ASTBufferSize,
                           IRBuffer, IRBufferSize, LocalPtrs, LocalPtrsCnt,
                           LocalDbgPtrs, LocalDbgPtrsCnt, DeviceData, DevCnt);
     TUCompilerData[ASTBuffer].reset(CD);
   } else {
     CD = TUCDI->second.get();
+    
   }
-
+  
   void *FPtr = CD->resolveFunction(NTTPValues, TypeStrings, Idx);
 
   {
@@ -1873,4 +2183,5 @@ void *__clang_jit(const void *CmdArgs, unsigned CmdArgsLen,
 
   return FPtr;
 }
+
 

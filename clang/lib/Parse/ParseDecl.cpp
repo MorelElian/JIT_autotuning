@@ -28,6 +28,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
 
+#include <iostream>
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -2910,6 +2911,7 @@ static void SetupFixedPointError(const LangOptions &LangOpts,
   isInvalid = true;
 }
 
+
 /// ParseDeclarationSpecifiers
 ///       declaration-specifiers: [C99 6.7]
 ///         storage-class-specifier declaration-specifiers[opt]
@@ -3744,6 +3746,10 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       continue;
 
     // cv-qualifier:
+    case tok::kw___autotune__:
+      isInvalid = DS.SetTypeQual(DeclSpec::TQ_autotune, Loc, PrevSpec, DiagID,
+                                 getLangOpts());
+    break;
     case tok::kw_const:
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_const, Loc, PrevSpec, DiagID,
                                  getLangOpts());
@@ -3821,6 +3827,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         break;
       };
       LLVM_FALLTHROUGH;
+    
     case tok::kw___private:
     case tok::kw___global:
     case tok::kw___local:
@@ -4754,7 +4761,7 @@ bool Parser::isTypeSpecifierQualifier() {
   case tok::kw_volatile:
   case tok::kw_restrict:
   case tok::kw__Sat:
-
+  case tok::kw___autotune__:
     // Debugger support.
   case tok::kw___unknown_anytype:
 
@@ -4913,6 +4920,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_volatile:
   case tok::kw_restrict:
   case tok::kw__Sat:
+  case tok::kw___autotune__:
 
     // function-specifier
   case tok::kw_inline:
@@ -5165,7 +5173,10 @@ void Parser::ParseTypeQualifierListOpt(
       else
         Actions.CodeCompleteTypeQualifiers(DS);
       return cutOffParsing();
-
+    case tok::kw___autotune__:
+      isInvalid = DS.SetTypeQual(DeclSpec::TQ_autotune,Loc,PrevSpec,DiagID,
+                                 getLangOpts());
+      break;
     case tok::kw_const:
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_const   , Loc, PrevSpec, DiagID,
                                  getLangOpts());

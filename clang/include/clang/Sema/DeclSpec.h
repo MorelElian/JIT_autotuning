@@ -303,6 +303,7 @@ public:
   static const TST TST_auto_type = clang::TST_auto_type;
   static const TST TST_unknown_anytype = clang::TST_unknown_anytype;
   static const TST TST_atomic = clang::TST_atomic;
+  //static const TST TST_autotune = clang::TST_autotune;
 #define GENERIC_IMAGE_TYPE(ImgType, Id) \
   static const TST TST_##ImgType##_t = clang::TST_##ImgType##_t;
 #include "clang/Basic/OpenCLImageTypes.def"
@@ -314,10 +315,11 @@ public:
     TQ_const       = 1,
     TQ_restrict    = 2,
     TQ_volatile    = 4,
-    TQ_unaligned   = 8,
+    TQ_unaligned   = 32,
     // This has no corresponding Qualifiers::TQ value, because it's not treated
     // as a qualifier in our type system.
-    TQ_atomic      = 16
+    TQ_atomic      = 16,
+    TQ_autotune = 8
   };
 
   /// ParsedSpecifiers - Flags to query which specifiers were applied.  This is
@@ -390,7 +392,7 @@ private:
   /// TSTNameLoc provides source range info for tag types.
   SourceLocation TSTNameLoc;
   SourceRange TypeofParensRange;
-  SourceLocation TQ_constLoc, TQ_restrictLoc, TQ_volatileLoc, TQ_atomicLoc,
+  SourceLocation TQ_constLoc, TQ_restrictLoc, TQ_volatileLoc, TQ_atomicLoc,TQ_autotuneLoc,
       TQ_unalignedLoc;
   SourceLocation FS_inlineLoc, FS_virtualLoc, FS_explicitLoc, FS_noreturnLoc;
   SourceLocation FS_forceinlineLoc;
@@ -544,6 +546,7 @@ public:
 
   /// getTypeQualifiers - Return a set of TQs.
   unsigned getTypeQualifiers() const { return TypeQualifiers; }
+  SourceLocation getAutotuneSpecLoc() const {return TQ_autotuneLoc;}
   SourceLocation getConstSpecLoc() const { return TQ_constLoc; }
   SourceLocation getRestrictSpecLoc() const { return TQ_restrictLoc; }
   SourceLocation getVolatileSpecLoc() const { return TQ_volatileLoc; }
@@ -560,6 +563,7 @@ public:
     TQ_atomicLoc = SourceLocation();
     TQ_unalignedLoc = SourceLocation();
     TQ_pipeLoc = SourceLocation();
+    TQ_autotuneLoc = SourceLocation();
   }
 
   // function-specifier
@@ -1163,8 +1167,8 @@ struct DeclaratorChunk {
   ParsedAttributesView AttrList;
 
   struct PointerTypeInfo {
-    /// The type qualifiers: const/volatile/restrict/unaligned/atomic.
-    unsigned TypeQuals : 5;
+    /// The type qualifiers: const/volatile/restrict/unaligned/atomic/autotune.
+    unsigned TypeQuals : 6;
 
     /// The location of the const-qualifier, if any.
     unsigned ConstQualLoc;

@@ -450,7 +450,9 @@ void TemplateArgument::print(const PrintingPolicy &Policy,
     }
     Out << ">";
     break;
+ 
   }
+  
 }
 
 void TemplateArgument::dump(raw_ostream &Out) const {

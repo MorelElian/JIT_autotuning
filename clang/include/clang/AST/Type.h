@@ -62,7 +62,7 @@ class TagDecl;
 class Type;
 
 enum {
-  TypeAlignmentInBits = 4,
+  TypeAlignmentInBits = 5,
   TypeAlignment = 1 << TypeAlignmentInBits
 };
 
@@ -140,7 +140,8 @@ public:
     Const    = 0x1,
     Restrict = 0x2,
     Volatile = 0x4,
-    CVRMask = Const | Volatile | Restrict
+    Autotune = 0x8,
+    CVRMask = Const | Volatile | Restrict | Autotune
   };
 
   enum GC {
@@ -174,10 +175,11 @@ public:
   enum {
     /// The maximum supported address space number.
     /// 23 bits should be enough for anyone.
-    MaxAddressSpace = 0x7fffffu,
+    // Changed to 22
+    MaxAddressSpace = 0x3fffffu,
 
     /// The width of the "fast" qualifier mask.
-    FastWidth = 3,
+    FastWidth = 4,
 
     /// The fast qualifier mask.
     FastMask = (1 << FastWidth) - 1
@@ -265,6 +267,11 @@ public:
   bool hasOnlyRestrict() const { return Mask == Restrict; }
   void removeRestrict() { Mask &= ~Restrict; }
   void addRestrict() { Mask |= Restrict; }
+
+  bool hasAutotune() const { return Mask & Autotune; }
+  bool hasOnlyAutotune() const { return Mask == Autotune; }
+  void removeAutotune() { Mask &= ~Autotune; }
+  void addAutotune() { Mask |= Autotune; }
 
   bool hasCVRQualifiers() const { return getCVRQualifiers(); }
   unsigned getCVRQualifiers() const { return Mask & CVRMask; }
@@ -555,17 +562,19 @@ public:
 private:
   // bits:     |0 1 2|3|4 .. 5|6  ..  8|9   ...   31|
   //           |C R V|U|GCAttr|Lifetime|AddressSpace|
+  // bits:     |0 1 2 3|4|5 .. 6|7  ..  9|10   ...   31|
+  //           |C R V A|U|GCAttr|Lifetime|AddressSpace|
   uint32_t Mask = 0;
 
-  static const uint32_t UMask = 0x8;
-  static const uint32_t UShift = 3;
-  static const uint32_t GCAttrMask = 0x30;
-  static const uint32_t GCAttrShift = 4;
-  static const uint32_t LifetimeMask = 0x1C0;
-  static const uint32_t LifetimeShift = 6;
+  static const uint32_t UMask = 0x16;
+  static const uint32_t UShift = 4;
+  static const uint32_t GCAttrMask = 0x60;
+  static const uint32_t GCAttrShift = 5;
+  static const uint32_t LifetimeMask = 0x380;
+  static const uint32_t LifetimeShift = 7;
   static const uint32_t AddressSpaceMask =
       ~(CVRMask | UMask | GCAttrMask | LifetimeMask);
-  static const uint32_t AddressSpaceShift = 9;
+  static const uint32_t AddressSpaceShift = 10;
 };
 
 /// A std::pair-like structure for storing a qualified type split
@@ -706,10 +715,14 @@ public:
   bool isLocalConstQualified() const {
     return (getLocalFastQualifiers() & Qualifiers::Const);
   }
-
+  
   /// Determine whether this type is const-qualified.
   bool isConstQualified() const;
 
+  bool isLocalAutotuneQualified() const {
+    return(getLocalFastQualifiers() & Qualifiers::Autotune);
+  }
+  bool isAutotuneQualified() const;
   /// Determine whether this particular QualType instance has the
   /// "restrict" qualifier set, without looking through typedefs that may have
   /// added "restrict" at a different level.
@@ -798,6 +811,9 @@ public:
 
   // Don't promise in the API that anything besides 'const' can be
   // easily added.
+  void addAutotune() {
+    addFastQualifiers(Qualifiers::Autotune);
+  }
 
   /// Add the `const` type qualifier to this QualType.
   void addConst() {
@@ -836,6 +852,7 @@ public:
   void removeLocalConst();
   void removeLocalVolatile();
   void removeLocalRestrict();
+  void removeLocalAutotune();
   void removeLocalCVRQualifiers(unsigned Mask);
 
   void removeLocalFastQualifiers() { Value.setInt(0); }
@@ -3637,6 +3654,7 @@ public:
   bool isConst() const { return getFastTypeQuals().hasConst(); }
   bool isVolatile() const { return getFastTypeQuals().hasVolatile(); }
   bool isRestrict() const { return getFastTypeQuals().hasRestrict(); }
+  bool isAutotune() const { return getFastTypeQuals().hasAutotune();}
 
   /// Determine the type of an expression that calls a function of
   /// this type.
@@ -6180,7 +6198,9 @@ inline bool QualType::isConstQualified() const {
   return isLocalConstQualified() ||
          getCommonPtr()->CanonicalType.isLocalConstQualified();
 }
-
+inline bool QualType::isAutotuneQualified() const {
+  return isLocalAutotuneQualified() || getCommonPtr()->CanonicalType.isLocalAutotuneQualified();
+}
 inline bool QualType::isRestrictQualified() const {
   return isLocalRestrictQualified() ||
          getCommonPtr()->CanonicalType.isLocalRestrictQualified();
@@ -6222,7 +6242,9 @@ inline void QualType::removeLocalRestrict() {
 inline void QualType::removeLocalVolatile() {
   removeLocalFastQualifiers(Qualifiers::Volatile);
 }
-
+inline void QualType::removeLocalAutotune() {
+  removeLocalFastQualifiers(Qualifiers::Autotune);
+}
 inline void QualType::removeLocalCVRQualifiers(unsigned Mask) {
   assert(!(Mask & ~Qualifiers::CVRMask) && "mask has non-CVR bits");
   static_assert((int)Qualifiers::CVRMask == (int)Qualifiers::FastMask,

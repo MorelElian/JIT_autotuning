@@ -18,6 +18,7 @@
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
+#include <iostream>
 using namespace clang;
 
 /// Parse a template declaration, explicit instantiation, or
@@ -694,6 +695,8 @@ Parser::ParseNonTypeTemplateParameter(unsigned Depth, unsigned Position) {
     Diag(Tok.getLocation(), diag::err_expected_template_parameter);
     return nullptr;
   }
+
+  //DS.getAutotuneSpecLoc().print(llvm::outs(),PP.getSourceManager());
 
   // Recover from misplaced ellipsis.
   SourceLocation EllipsisLoc;

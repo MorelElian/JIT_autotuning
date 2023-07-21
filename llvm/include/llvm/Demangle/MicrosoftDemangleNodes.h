@@ -16,7 +16,8 @@
 #include "llvm/Demangle/DemangleConfig.h"
 #include "llvm/Demangle/StringView.h"
 #include <array>
-
+#include <string>
+#include <cstdint>
 namespace llvm {
 namespace itanium_demangle {
 class OutputStream;

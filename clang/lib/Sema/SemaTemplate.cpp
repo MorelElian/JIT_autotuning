@@ -34,6 +34,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <iterator>
+#include <iostream>
 using namespace clang;
 using namespace sema;
 
@@ -1010,6 +1011,8 @@ QualType Sema::CheckNonTypeTemplateParameterType(QualType T,
                                                  SourceLocation Loc) {
   // We don't allow variably-modified types as the type of non-type template
   // parameters.
+  
+  
   if (T->isVariablyModifiedType()) {
     Diag(Loc, diag::err_variably_modified_nontype_template_param)
       << T;
@@ -1061,7 +1064,6 @@ NamedDecl *Sema::ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
                                           SourceLocation EqualLoc,
                                           Expr *Default) {
   TypeSourceInfo *TInfo = GetTypeForDeclarator(D, S);
-
   // Check that we have valid decl-specifiers specified.
   auto CheckValidDeclSpecifiers = [this, &D] {
     // C++ [temp.param]
@@ -1115,7 +1117,7 @@ NamedDecl *Sema::ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
   };
 
   CheckValidDeclSpecifiers();
-
+  
   if (TInfo->getType()->isUndeducedType()) {
     Diag(D.getIdentifierLoc(),
          diag::warn_cxx14_compat_template_nontype_parm_auto_type)
@@ -1125,11 +1127,24 @@ NamedDecl *Sema::ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
   assert(S->isTemplateParamScope() &&
          "Non-type template parameter not in template parameter scope!");
   bool Invalid = false;
-
+  
   QualType T = CheckNonTypeTemplateParameterType(TInfo, D.getIdentifierLoc());
+
+  
+  if(T.isConstQualified() )
+  {
+    
+  } 
   if (T.isNull()) {
     T = Context.IntTy; // Recover with an 'int' type.
     Invalid = true;
+  }
+  const DeclSpec &DS = D.getDeclSpec();
+  if(DS.getAutotuneSpecLoc() != SourceLocation())
+  {
+    //T.addAutotune();
+    T = QualType(T.getTypePtr()->getPointeeType().getTypePtr(),0x8);
+    
   }
 
   IdentifierInfo *ParamName = D.getIdentifier();
@@ -1138,6 +1153,7 @@ NamedDecl *Sema::ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
       Context, Context.getTranslationUnitDecl(), D.getBeginLoc(),
       D.getIdentifierLoc(), Depth, Position, ParamName, T, IsParameterPack,
       TInfo);
+  
   Param->setAccess(AS_public);
 
   if (Invalid)
@@ -1177,7 +1193,7 @@ NamedDecl *Sema::ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
 
     Param->setDefaultArgument(Default);
   }
-
+  
   return Param;
 }
 
@@ -6339,8 +6355,11 @@ ExprResult Sema::CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
   }
 
   // We should have already dropped all cv-qualifiers by now.
+  if(!IsForJIT)
+  {
   assert(!ParamType.hasQualifiers() &&
          "non-type template parameter type cannot be qualified");
+  }
 
   if (CTAK == CTAK_Deduced &&
       !Context.hasSameType(ParamType.getNonLValueExprType(Context),

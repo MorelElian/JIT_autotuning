@@ -521,7 +521,7 @@ private:
     return isTokenStringLiteral() || isTokenParen() || isTokenBracket() ||
            isTokenBrace() || Tok.is(tok::code_completion) || Tok.isAnnotation();
   }
-
+ 
   /// Returns true if the current token is '=' or is a type of '='.
   /// For typos, give a fixit to '='
   bool isTokenEqualOrEqualTypo();

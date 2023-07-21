@@ -832,7 +832,7 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
         DS.getRepAsExpr()->containsUnexpandedParameterPack())
       return true;
     break;
-
+  
   case TST_unspecified:
   case TST_void:
   case TST_char:

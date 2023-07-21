@@ -35,6 +35,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MathExtras.h"
+#include <iostream> 
 
 using namespace clang;
 using namespace sema;
@@ -95,7 +96,7 @@ static unsigned getFunctionOrMethodNumParams(const Decl *D) {
 static const ParmVarDecl *getFunctionOrMethodParam(const Decl *D,
                                                    unsigned Idx) {
   if (const auto *FD = dyn_cast<FunctionDecl>(D))
-    return FD->getParamDecl(Idx);
+      return FD->getParamDecl(Idx);
   if (const auto *MD = dyn_cast<ObjCMethodDecl>(D))
     return MD->getParamDecl(Idx);
   if (const auto *BD = dyn_cast<BlockDecl>(D))
@@ -6478,6 +6479,7 @@ static void handleFortifyStdLib(Sema &S, Decl *D, const ParsedAttr &AL) {
       AL.getAttributeSpellingListIndex()));
 }
 
+
 //===----------------------------------------------------------------------===//
 // Top Level Sema Entry Points
 //===----------------------------------------------------------------------===//
@@ -6663,6 +6665,7 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     handleOptimizeNoneAttr(S, D, AL);
     break;
   case ParsedAttr::AT_JITFunc:
+
     handleJITFuncAttr(S, D, AL);
     break;
   case ParsedAttr::AT_FlagEnum:

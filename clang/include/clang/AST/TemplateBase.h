@@ -87,7 +87,7 @@ public:
 
     /// The template argument is actually a parameter pack. Arguments are stored
     /// in the Args struct.
-    Pack
+    Pack,
   };
 
 private:
@@ -134,6 +134,7 @@ private:
     struct A Args;
     struct TA TemplateArg;
     struct TV TypeOrValue;
+    
   };
 
 public:
