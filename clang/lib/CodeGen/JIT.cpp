@@ -2134,12 +2134,13 @@ void *__clang_jit(const void *CmdArgs, unsigned CmdArgsLen,
     
     auto IIAutotune = AutotuneInfoMap.find(ASTBuffer);
     
-    if(IIAutotune == AutotuneInfoMap.end())
+    if(IIAutotune != AutotuneInfoMap.end())
     {
+
     auto II =
       Instantiations.find_as(ThisInstInfo(InstKey, NTTPValues, NTTPValuesSize,
                                           TypeStrings, TypeStringsCnt));
-    if (II != Instantiations.end())
+    if (II != Instantiations.end() && !AutotuneInfoMap[ASTBuffer]->toOptimize)
       {
       
       return II->second;
