@@ -595,9 +595,9 @@ class AutotuneInfo
             min = this->rtdscValues[k];
         }
       }
-      std::cout << "Final MIN :\n";
+      //std::cout << "Final MIN :\n";
     }
-    std::cout << "Current id Param:" << this->idParameter << "\n";    
+    //std::cout << "Current id Param:" << this->idParameter << "\n";    
     this->nCalls++;
   }
   void readElements(VarDecl* TAB,unsigned ElemSize,llvm::APInt IntVal)
@@ -2142,7 +2142,6 @@ void *__clang_jit(const void *CmdArgs, unsigned CmdArgsLen,
                                           TypeStrings, TypeStringsCnt));
     if (II != Instantiations.end() && !AutotuneInfoMap[ASTBuffer]->toOptimize)
       {
-      
       return II->second;
       }
     }
