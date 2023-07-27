@@ -108,6 +108,7 @@
 
 #include <cassert>
 #include <cstdlib> // ::getenv
+
 #include <cstring>
 #include <memory>
 #include <string>
@@ -115,21 +116,21 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
-#include <x86intrin.h>
+//#include <x86intrin.h>
 using namespace clang;
 using namespace llvm;
 
 #define DEBUG_TYPE "clang-jit"
-llvm::DenseMap<const void *, int> autotuneTable;
-llvm::DenseMap<const void *, llvm::APInt*>Values;
-long long *rtdsc_values;
+long long globalRdtsc;
 
 
 namespace {
 // FIXME: This is copied from lib/Frontend/ASTUnit.cpp
 
 /// Gathers information from ASTReader that will be used to initialize
-/// a Preprocessor.
+/// a Preprocessor
+
+
 class ASTInfoCollector : public ASTReaderListener {
   Preprocessor &PP;
   ASTContext *Context;
@@ -547,7 +548,7 @@ template<typename T>
 class AutotuneInfo
 {
   public :
-
+  
   int nCalls;
   int sizeOfTable;
   int idAT;
@@ -555,7 +556,7 @@ class AutotuneInfo
   std::string variableName;
   QualType varTypeAutotune;
   T* Values;
-  long long *rtdscValues;
+  long long *rdtscValues;
   bool toOptimize;
   AutotuneInfo(QualType varTypeAutotune,int idAT)
   {
@@ -565,34 +566,34 @@ class AutotuneInfo
     this->varTypeAutotune = varTypeAutotune;
     this->sizeOfTable = 0;
   }
-  void allocRtdscValues()
+  void allocRdtscValues()
   {
     
-    this->rtdscValues =  (long long *) malloc(this->sizeOfTable * sizeof(long long));
+    this->rdtscValues =  (long long *) malloc(this->sizeOfTable * sizeof(long long));
     this->idParameter = 0;
     this->nCalls++;
   }
-  void updateRtdscValues(const char* filename)
+  void updateRdtscValues(const char* filename)
   {
-    FILE* rtdscCompteur = fopen(filename,"r");
+    FILE* rdtscCompteur = fopen(filename,"r");
     
-    long long valueRTDSC;
-    fscanf(rtdscCompteur, "%lld", &valueRTDSC);
+    //long long valueRTDSC;
+    //fscanf(rtdscCompteur, "%lld", &valueRTDSC);
     //Fonction attribution du i_parameter
-    this->rtdscValues[this->nCalls-1] = valueRTDSC;
+    this->rdtscValues[this->nCalls-1] = globalRdtsc;
     this->idParameter++;
     if(this->nCalls >= this->sizeOfTable)
     {
       
       this->toOptimize = false;
       this->idParameter = 0;
-      long long min = this->rtdscValues[0];
+      long long min = this->rdtscValues[0];
       for(int k = 1; k < this->sizeOfTable; k++)
       {
-        if(min > this->rtdscValues[k])
+        if(min > this->rdtscValues[k])
         {
             this->idParameter = k;
-            min = this->rtdscValues[k];
+            min = this->rdtscValues[k];
         }
       }
       //std::cout << "Final MIN :\n";
@@ -633,6 +634,7 @@ class AutotuneInfo
   {
     llvm::Function *myFunction = Consumer->getModule()->getFunction(SMName);
     auto* module = Consumer->getModule();
+    
     if (!myFunction) {
     llvm::errs() << "La fonction 'my_function' n'a pas été trouvée.\n";
     
@@ -673,6 +675,11 @@ class AutotuneInfo
         llvm::Value* rdtscResultBis = builder.CreateCall(rdtscFunc);
         llvm::Value *timeDifference = builder.CreateSub(rdtscResultBis, rdtscResult);
         
+        /*llvm::FunctionType *testFuncType = llvm::FunctionType::get(llvm::Type::getVoidTy(module->getContext()), {llvm::Type::getInt32Ty(module->getContext())}, false);
+        llvm::FunctionCallee testFuncCallee = module->getOrInsertFunction("test", testFuncType);
+        /*llvm::Function *testFunc = cast<Function>(testFuncCallee.getCallee());
+        llvm::ConstantInt *argValue = ConstantInt::get(llvm::Type::getInt32Ty(module->getContext()), 42);
+        builder.CreateCall(testFunc,{argValue});
         llvm::FunctionType* fileOpenFuncType = llvm::FunctionType::get(llvm::Type::getInt8PtrTy(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext()), llvm::Type::getInt8PtrTy(module->getContext())}, false);
         llvm::FunctionCallee fileOpenFunc = module->getOrInsertFunction("fopen", fileOpenFuncType);
         llvm::Value* filenameStr = builder.CreateGlobalStringPtr(filename, "filenameStr");
@@ -685,6 +692,7 @@ class AutotuneInfo
         llvm::GlobalVariable* formatStrVar = new llvm::GlobalVariable(*module, formatConstant->getType(), true, llvm::GlobalValue::PrivateLinkage, formatConstant, ".str");
         auto  formatStrPtr = llvm::ConstantExpr::getBitCast(formatStrVar, llvm::Type::getInt8PtrTy(module->getContext()));
         llvm::Value* printfArgsForFile[] = {file,formatStrPtr, timeDifference };
+        //llvm::Value* printfArgsForFile[] = {formatStrPtr,timeDifference};
 
         builder.CreateCall(fprintfFunc, llvm::ArrayRef<llvm::Value*>(printfArgsForFile, 3));
 
@@ -692,12 +700,17 @@ class AutotuneInfo
         llvm::FunctionCallee fileCloseFunc = module->getOrInsertFunction("fclose", fileCloseFuncType);
 
         builder.CreateCall(fileCloseFunc, file);
+        */
+        llvm::FunctionType* rdtscStopTy = llvm::FunctionType::get(llvm::Type::getVoidTy(module->getContext()),{llvm::Type::getInt64Ty(Consumer->getModule()->getContext())},false);
+        llvm::FunctionCallee rdtscStop = module->getOrInsertFunction("stop_rdtsc", rdtscStopTy);
+        builder.CreateCall(rdtscStop,{timeDifference});
       }
     } 
   }
 };
 
 llvm::DenseMap<const void *,AutotuneInfo<llvm::APInt>*> AutotuneInfoMap;
+
 class JFIMapDeclVisitor : public RecursiveASTVisitor<JFIMapDeclVisitor> {
   DenseMap<unsigned, FunctionDecl *> &Map;
 
@@ -1657,12 +1670,12 @@ struct CompilerData {
     
     if(AutotuneInfoMap[ASTBuffer]->nCalls == 0)
     {
-      AutotuneInfoMap[ASTBuffer]->allocRtdscValues();
+      AutotuneInfoMap[ASTBuffer]->allocRdtscValues();
     }
     else if(AutotuneInfoMap[ASTBuffer]->toOptimize) 
     {
       
-      AutotuneInfoMap[ASTBuffer]->updateRtdscValues("/tmp/rtdsc.txt");
+      AutotuneInfoMap[ASTBuffer]->updateRdtscValues("/tmp/rtdsc.txt");
     }
     
     AutotuneInfoMap[ASTBuffer]->addLLVMInstructions("/tmp/rtdsc.txt",SMName,Consumer);
@@ -1968,6 +1981,7 @@ struct CompilerData {
       if (!F.isDeclaration())
         F.setLinkage(llvm::GlobalValue::AvailableExternallyLinkage);
 
+    
     for (auto &GV : Consumer->getModule()->global_values())
       if (!GV.isDeclaration()) {
         if (GV.hasAppendingLinkage())
@@ -1980,7 +1994,7 @@ struct CompilerData {
           GV.setLinkage(llvm::GlobalValue::AvailableExternallyLinkage);
       }
 
-    // OverrideFromSrc is needed here too, otherwise globals marked available_externally are not considered.
+    //  OverrideFromSrc is needed here too, otherwise globals marked available_externally are not considered.
     if (Linker::linkModules(*RunningMod, Consumer->takeModule(),
                             Linker::Flags::OverrideFromSrc))
       fatal();
@@ -2184,4 +2198,13 @@ void *__clang_jit(const void *CmdArgs, unsigned CmdArgsLen,
   return FPtr;
 }
 
+extern "C"
+#ifdef _MSC_VER
+__declspec(dllexport)
+#endif
+void stop_rdtsc(long long rdtscFinal)
+{
+  globalRdtsc = rdtscFinal; 
+  return;
+}
 

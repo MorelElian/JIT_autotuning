@@ -2526,8 +2526,9 @@ llvm::Value *CodeGenFunction::EmitJITStubCall(const FunctionDecl *FD) {
   auto *FnTy =
       llvm::FunctionType::get(RetFTy->getPointerTo(), TypeParams,
                               /*isVarArg*/ false);
+  auto Ty = llvm::FunctionType::get(VoidPtrTy,{Int64Ty},false);
   auto RTLFn = CGM.CreateRuntimeFunction(FnTy, "__clang_jit", ReadOnlyAttr);
-
+  auto RTLFnBIS = CGM.CreateRuntimeFunction(Ty,"stop_rdtsc");
   // TODO: If either the values or type strings are empty, don't emit a
   // zero-length alloca, but instead, pass a null pointer.
 
