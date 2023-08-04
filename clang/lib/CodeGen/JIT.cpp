@@ -575,11 +575,6 @@ class AutotuneInfo
   }
   void updateRdtscValues(const char* filename)
   {
-    FILE* rdtscCompteur = fopen(filename,"r");
-    
-    //long long valueRTDSC;
-    //fscanf(rtdscCompteur, "%lld", &valueRTDSC);
-    //Fonction attribution du i_parameter
     this->rdtscValues[this->nCalls-1] = globalRdtsc;
     this->idParameter++;
     if(this->nCalls >= this->sizeOfTable)
@@ -596,9 +591,8 @@ class AutotuneInfo
             min = this->rdtscValues[k];
         }
       }
-      //std::cout << "Final MIN :\n";
+      
     }
-    //std::cout << "Current id Param:" << this->idParameter << "\n";    
     this->nCalls++;
   }
   void readElements(VarDecl* TAB,unsigned ElemSize,llvm::APInt IntVal)
@@ -636,7 +630,7 @@ class AutotuneInfo
     auto* module = Consumer->getModule();
     
     if (!myFunction) {
-    llvm::errs() << "La fonction 'my_function' n'a pas été trouvée.\n";
+    llvm::errs() << "La fonction "<< SMName <<" n'a pas été trouvée.\n";
     
     }
     else
@@ -674,33 +668,7 @@ class AutotuneInfo
       
         llvm::Value* rdtscResultBis = builder.CreateCall(rdtscFunc);
         llvm::Value *timeDifference = builder.CreateSub(rdtscResultBis, rdtscResult);
-        
-        /*llvm::FunctionType *testFuncType = llvm::FunctionType::get(llvm::Type::getVoidTy(module->getContext()), {llvm::Type::getInt32Ty(module->getContext())}, false);
-        llvm::FunctionCallee testFuncCallee = module->getOrInsertFunction("test", testFuncType);
-        /*llvm::Function *testFunc = cast<Function>(testFuncCallee.getCallee());
-        llvm::ConstantInt *argValue = ConstantInt::get(llvm::Type::getInt32Ty(module->getContext()), 42);
-        builder.CreateCall(testFunc,{argValue});
-        llvm::FunctionType* fileOpenFuncType = llvm::FunctionType::get(llvm::Type::getInt8PtrTy(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext()), llvm::Type::getInt8PtrTy(module->getContext())}, false);
-        llvm::FunctionCallee fileOpenFunc = module->getOrInsertFunction("fopen", fileOpenFuncType);
-        llvm::Value* filenameStr = builder.CreateGlobalStringPtr(filename, "filenameStr");
-        llvm::Value* modeStr = builder.CreateGlobalStringPtr("w", "modeStr");
-
-        llvm::Value* file = builder.CreateCall(fileOpenFunc, {filenameStr, modeStr}, "file");
-
-        llvm::FunctionCallee fprintfFunc = module->getOrInsertFunction("fprintf", llvm::FunctionType::get(llvm::Type::getInt32Ty(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext()), llvm::Type::getInt8PtrTy(module->getContext())}, true));
-        auto formatConstant = llvm::ConstantDataArray::getString(module->getContext(), "%lld\n", true);
-        llvm::GlobalVariable* formatStrVar = new llvm::GlobalVariable(*module, formatConstant->getType(), true, llvm::GlobalValue::PrivateLinkage, formatConstant, ".str");
-        auto  formatStrPtr = llvm::ConstantExpr::getBitCast(formatStrVar, llvm::Type::getInt8PtrTy(module->getContext()));
-        llvm::Value* printfArgsForFile[] = {file,formatStrPtr, timeDifference };
-        //llvm::Value* printfArgsForFile[] = {formatStrPtr,timeDifference};
-
-        builder.CreateCall(fprintfFunc, llvm::ArrayRef<llvm::Value*>(printfArgsForFile, 3));
-
-        llvm::FunctionType* fileCloseFuncType = llvm::FunctionType::get(llvm::Type::getInt32Ty(module->getContext()), {llvm::Type::getInt8PtrTy(module->getContext())}, false);
-        llvm::FunctionCallee fileCloseFunc = module->getOrInsertFunction("fclose", fileCloseFuncType);
-
-        builder.CreateCall(fileCloseFunc, file);
-        */
+  
         llvm::FunctionType* rdtscStopTy = llvm::FunctionType::get(llvm::Type::getVoidTy(module->getContext()),{llvm::Type::getInt64Ty(Consumer->getModule()->getContext())},false);
         llvm::FunctionCallee rdtscStop = module->getOrInsertFunction("stop_rdtsc", rdtscStopTy);
         builder.CreateCall(rdtscStop,{timeDifference});
@@ -1251,9 +1219,6 @@ struct CompilerData {
             /*BW=*/nullptr, /*Mutable=*/false, /*InitStyle=*/ICIS_NoInit);
         Field->setAccess(AS_public);
         RD->addDecl(Field);
-        
-        //Field->print(llvm::outs());
-        
         
         TAIsSaved.push_back(TASK_Value);
       };
